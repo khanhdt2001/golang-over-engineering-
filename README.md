@@ -1,4 +1,4 @@
-# User module
+# User and task modules
 
 A small Go HTTP API for user sign-up, sign-in, and profile updates. It stores users and hashed session tokens in PostgreSQL, and emits JSON request logs for Loki/Grafana.
 
@@ -16,30 +16,35 @@ Services exposed on the host:
 
 | Service | Address | Purpose |
 | --- | --- | --- |
-| User API | `http://localhost:8080` | HTTP API |
+| User API | `http://localhost:8080` | User HTTP API |
+| Task API | `http://localhost:8081` | Task HTTP API |
 | User PostgreSQL | `localhost:15432` | `users` database (`app` / `app`) |
+| Task PostgreSQL | `localhost:25432` | `tasks` database (`app` / `app`) |
 | Grafana | `http://localhost:3000` | Log exploration |
 | Loki | `http://localhost:3100` | Log store |
 | Alloy | `http://localhost:12345` | Docker-log collector status |
 
-Run just the API outside Docker (the Compose PostgreSQL must be running):
+Run either API outside Docker (its Compose PostgreSQL must be running):
 
 ```sh
-docker compose up -d user-postgres
-cd user
-go run .
+docker compose up -d user-postgres task-postgres
+cd user && go run .
+# separately, with task-postgres running
+cd task && go run .
 ```
 
 `DATABASE_URL` overrides the default connection string:
 
 ```text
-postgres://app:app@localhost:15432/users?sslmode=disable
+user: postgres://app:app@localhost:15432/users?sslmode=disable
+task: postgres://app:app@localhost:25432/tasks?sslmode=disable
 ```
 
 The API creates its tables and indexes on startup. Run checks with:
 
 ```sh
 cd user && go test ./...
+cd task && go test ./...
 ```
 
 ## API contract
@@ -146,6 +151,49 @@ Useful filters:
 {service="user-api"} | json | error != ""
 ```
 
+## Task API contract
+
+Task fields are `id`, `name`, `description`, `time`, and `user_id`. The task module stores them in its own `tasks` database. PostgreSQL foreign keys cannot span the separate `users` and `tasks` databases, so `user_id` is a UUID reference validated by the owning user module or gateway.
+
+### Create task
+
+`POST /v1/tasks`
+
+```sh
+curl -i http://localhost:8081/v1/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Write docs","description":"Document the task API","time":"2026-08-31T09:00:00Z","user_id":"USER_UUID"}'
+```
+
+Success: `201` with the created task.
+
+### Get task
+
+`GET /v1/tasks/{id}` returns the task, or `404` when it does not exist.
+
+### List a user's tasks
+
+`GET /v1/users/{user_id}/tasks` returns an array ordered by `time`.
+
+### Update task
+
+`PATCH /v1/tasks/{id}` accepts one or more of `name`, `description`, `time`, and `user_id`.
+
+```sh
+curl -i http://localhost:8081/v1/tasks/TASK_UUID \
+  -X PATCH \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Write task documentation"}'
+```
+
+Task request bodies reject unknown fields. Names must be non-blank and at most 100 characters; descriptions are at most 1000 characters; `time` must be RFC 3339; IDs must be UUIDs. Invalid input returns `400`; a missing task returns `404`; unexpected errors return `500`.
+
+Debug the module with:
+
+```sh
+docker compose logs -f task-api
+```
+
 If the API does not start, check database reachability and migrations:
 
 ```sh
@@ -168,7 +216,7 @@ HTTP request
 - `user/api/http.go` is the public HTTP boundary. Add routes and response mapping here.
 - `user/service/user.go` owns business rules. It depends on the small `Repository` interface, so unit tests can use a fake.
 - `user/db/postgres.go` is the only PostgreSQL implementation and owns the tables, indexes, and SQL.
-- `compose.yaml` runs the API, database, Kafka, a separate task database, and the observability stack. Kafka and `task-postgres` are infrastructure for other modules; the user API does not use them.
+- `compose.yaml` runs both APIs, their own PostgreSQL databases, Kafka, and the observability stack.
 
 ## Pattern for the next module
 

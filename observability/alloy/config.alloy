@@ -19,6 +19,23 @@ loki.source.docker "user_api" {
   forward_to = [loki.write.local.receiver]
 }
 
+discovery.relabel "task_api" {
+  targets = discovery.docker.user_api.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "task-api"
+    action        = "keep"
+  }
+}
+
+loki.source.docker "task_api" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.task_api.output
+  labels     = {service = "task-api"}
+  forward_to = [loki.write.local.receiver]
+}
+
 loki.write "local" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"

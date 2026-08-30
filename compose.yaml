@@ -49,6 +49,18 @@ services:
     volumes:
       - task_postgres_data:/var/lib/postgresql/data
 
+  task-api:
+    build:
+      context: ./task
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      DATABASE_URL: postgres://app:app@task-postgres:5432/tasks?sslmode=disable
+    depends_on:
+      - task-postgres
+    restart: on-failure
+
   loki:
     image: grafana/loki:3.7.0
     command: -config.file=/etc/loki/config.yaml
