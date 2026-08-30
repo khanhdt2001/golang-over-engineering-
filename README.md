@@ -47,6 +47,26 @@ cd user && go test ./...
 cd task && go test ./...
 ```
 
+Generate the Go gRPC bindings with Docker. The repository pins Buf and both Go
+plugins, so developers do not need `protoc` or Go generator plugins installed:
+
+```sh
+./scripts/gen-proto.sh
+```
+
+The shared generated types live in the `proto` module. Import them from either
+API as needed:
+
+```go
+import userpb "github.com/khanhdt2001/golang-over-engineering-/proto/user/v1"
+import taskpb "github.com/khanhdt2001/golang-over-engineering-/proto/task/v1"
+```
+
+The user API also serves the `overengineering.user.v1.UserService` gRPC service
+on `localhost:9090`. Its `SignUp`, `SignIn`, and
+`UpdateProfile` messages are defined in `proto/user/v1/user.proto`; send the
+session token as `authorization: Bearer <token>` metadata for `UpdateProfile`.
+
 ## API contract
 
 All request and response bodies are JSON. Unknown request fields and malformed JSON return `400`.

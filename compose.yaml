@@ -28,10 +28,11 @@ services:
 
   user-api:
     build:
-      context: ./user
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: user/Dockerfile
     ports:
       - "8080:8080"
+      - "9090:9090"
     environment:
       DATABASE_URL: postgres://app:app@user-postgres:5432/users?sslmode=disable
     depends_on:

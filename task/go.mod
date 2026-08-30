@@ -2,7 +2,12 @@ module over-engineering/task
 
 go 1.25.0
 
-require github.com/jackc/pgx/v5 v5.8.0
+require (
+	github.com/jackc/pgx/v5 v5.8.0
+	github.com/khanhdt2001/golang-over-engineering-/proto v0.0.0
+)
+
+replace github.com/khanhdt2001/golang-over-engineering-/proto => ../proto
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

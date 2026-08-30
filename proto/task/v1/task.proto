@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package overengineering.task.v1;
+
+option go_package = "github.com/khanhdt2001/golang-over-engineering-/proto/task/v1;taskpb";
+
+service TaskService {
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc ListUserTasks(ListUserTasksRequest) returns (ListUserTasksResponse);
+  rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
+}
+
+message Task {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string user_id = 4;
+}
+
+message CreateTaskRequest {
+  string name = 1;
+  string description = 2;
+  string user_id = 3;
+}
+
+message CreateTaskResponse {
+  Task task = 1;
+}
+
+message GetTaskRequest {
+  string id = 1;
+}
+
+message GetTaskResponse {
+  Task task = 1;
+}
+
+message ListUserTasksRequest {
+  string user_id = 1;
+}
+
+message ListUserTasksResponse {
+  repeated Task tasks = 1;
+}
+
+message UpdateTaskRequest {
+  string id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional string user_id = 4;
+}
+
+message UpdateTaskResponse {
+  Task task = 1;
+}
