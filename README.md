@@ -19,6 +19,7 @@ Services exposed on the host:
 | User API | `http://localhost:8080` | User HTTP API |
 | Task API | `http://localhost:8081` | Task HTTP API |
 | Task gRPC API | `localhost:9091` | Task gRPC API |
+| Kafka logger | `docker compose logs -f kafka-logger` | Replays and logs Kafka audit messages |
 | User PostgreSQL | `localhost:15432` | `users` database (`app` / `app`) |
 | Task PostgreSQL | `localhost:25432` | `tasks` database (`app` / `app`) |
 | Grafana | `http://localhost:3000` | Log exploration |
@@ -46,7 +47,12 @@ The API creates its tables and indexes on startup. Run checks with:
 ```sh
 cd user && go test ./...
 cd task && go test ./...
+cd kafka-logger && go test ./...
 ```
+
+The Kafka logger reads every message from `user-api-calls` and `task-api-calls`
+from the first offset, then logs it as JSON. Override `KAFKA_BROKERS` or
+`KAFKA_TOPICS` (a comma-separated list) when running it outside Compose.
 
 Generate the Go gRPC bindings with Docker. The repository pins Buf and both Go
 plugins, so developers do not need `protoc` or Go generator plugins installed:
@@ -178,6 +184,7 @@ Useful filters:
 {service="user-api"} | json | status >= 400
 {service="user-api"} | json | path = "/v1/users/me"
 {service="user-api"} | json | error != ""
+{service="kafka-logger"}
 ```
 
 ## Task API contract

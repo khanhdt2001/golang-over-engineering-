@@ -71,6 +71,17 @@ services:
       - kafka
     restart: on-failure
 
+  kafka-logger:
+    build:
+      context: .
+      dockerfile: kafka-logger/Dockerfile
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPICS: user-api-calls,task-api-calls
+    depends_on:
+      - kafka
+    restart: on-failure
+
   loki:
     image: grafana/loki:3.7.0
     command: -config.file=/etc/loki/config.yaml
