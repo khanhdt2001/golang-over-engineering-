@@ -22,11 +22,21 @@ func (*fakeRepository) Update(context.Context, string, UpdateInput) (Task, error
 
 func TestCreateValidatesAndUsesRepository(t *testing.T) {
 	repo := &fakeRepository{}
-	_, err := New(repo).Create(context.Background(), CreateInput{Name: "Ship task module", Description: "", UserID: userID})
-	if err != nil || repo.created.Name != "Ship task module" || repo.created.UserID != userID {
+	checked := ""
+	users := func(_ context.Context, id string) error { checked = id; return nil }
+	_, err := New(repo, users).Create(context.Background(), CreateInput{Name: "Ship task module", Description: "", UserID: userID})
+	if err != nil || checked != userID || repo.created.Name != "Ship task module" || repo.created.UserID != userID {
 		t.Fatal("service did not validate and pass the task to the repository")
 	}
-	if _, err := New(repo).Create(context.Background(), CreateInput{UserID: userID}); err != ErrInvalidInput {
+	if _, err := New(repo, users).Create(context.Background(), CreateInput{UserID: userID}); err != ErrInvalidInput {
 		t.Fatalf("expected invalid input, got %v", err)
+	}
+}
+
+func TestCreateRejectsMissingUser(t *testing.T) {
+	repo := &fakeRepository{}
+	_, err := New(repo, func(context.Context, string) error { return ErrUserNotFound }).Create(context.Background(), CreateInput{Name: "Ship", UserID: userID})
+	if err != ErrUserNotFound || repo.created.Name != "" {
+		t.Fatalf("expected missing user before repository create, got %v", err)
 	}
 }

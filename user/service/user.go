@@ -19,6 +19,7 @@ var (
 	ErrEmailExists        = errors.New("email already registered")
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrInvalidInput       = errors.New("invalid input")
+	ErrNotFound           = errors.New("user not found")
 	ErrUnauthorized       = errors.New("unauthorized")
 )
 
@@ -44,6 +45,7 @@ type UpdateInput struct {
 type Repository interface {
 	CreateUser(context.Context, string, string, string) (User, error)
 	FindByEmail(context.Context, string) (User, string, error)
+	UserExists(context.Context, string) error
 	UpdateUser(context.Context, string, *string, *string, *string) (User, error)
 	CreateSession(context.Context, string, string, time.Time) error
 	FindSessionUser(context.Context, string) (string, error)
@@ -93,6 +95,20 @@ func (s *Service) SignIn(ctx context.Context, email, password string) (User, str
 		return User{}, "", err
 	}
 	return user, token, nil
+}
+
+func (s *Service) UserExists(ctx context.Context, id string) error {
+	if !validID(id) {
+		return ErrInvalidInput
+	}
+	err := s.repository.UserExists(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "find user failed", "operation", "check_user", "error", err)
+	}
+	return err
 }
 
 func (s *Service) UpdateProfile(ctx context.Context, token string, input UpdateInput) (User, error) {
@@ -147,6 +163,24 @@ func validEmail(email string) bool {
 func validPassword(password string) bool { return len(password) >= 8 && len(password) <= 72 }
 func validUsername(username string) bool {
 	return len(strings.TrimSpace(username)) >= 1 && len(username) <= 100
+}
+
+func validID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for i, char := range id {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if char != '-' {
+				return false
+			}
+			continue
+		}
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func newToken() (string, error) {

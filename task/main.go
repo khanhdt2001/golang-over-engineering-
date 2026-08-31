@@ -10,7 +10,10 @@ import (
 	"time"
 
 	taskpb "github.com/khanhdt2001/golang-over-engineering-/proto/task/v1"
+	userpb "github.com/khanhdt2001/golang-over-engineering-/proto/user/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
@@ -35,7 +38,25 @@ func main() {
 		log.Fatal(err)
 	}
 
-	tasks := service.New(repository)
+	userGRPCAddress := os.Getenv("USER_GRPC_ADDR")
+	if userGRPCAddress == "" {
+		userGRPCAddress = "localhost:9090"
+	}
+	userConnection, err := grpc.NewClient(userGRPCAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer userConnection.Close()
+	users := userpb.NewUserServiceClient(userConnection)
+	tasks := service.New(repository, func(ctx context.Context, id string) error {
+		requestContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_, err := users.CheckUser(requestContext, &userpb.CheckUserRequest{Id: id})
+		if status.Code(err) == codes.NotFound {
+			return service.ErrUserNotFound
+		}
+		return err
+	})
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(logGRPCRequests))
 	taskpb.RegisterTaskServiceServer(grpcServer, api.NewGRPC(tasks))
 	reflection.Register(grpcServer)

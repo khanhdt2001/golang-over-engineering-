@@ -64,6 +64,8 @@ func grpcError(err error) error {
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, service.ErrNotFound):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, service.ErrUserNotFound):
+		return status.Error(codes.NotFound, err.Error())
 	default:
 		return status.Error(codes.Internal, "internal server error")
 	}

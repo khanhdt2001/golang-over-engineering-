@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"over-engineering/user/service"
 )
 
-type grpcRepository struct{}
+type grpcRepository struct{ existsErr error }
 
 func (grpcRepository) CreateUser(_ context.Context, email, _, username string) (service.User, error) {
 	return service.User{ID: "user-1", Email: email, Username: username}, nil
@@ -20,6 +21,7 @@ func (grpcRepository) CreateUser(_ context.Context, email, _, username string) (
 func (grpcRepository) FindByEmail(context.Context, string) (service.User, string, error) {
 	return service.User{}, "", nil
 }
+func (r grpcRepository) UserExists(context.Context, string) error { return r.existsErr }
 func (grpcRepository) UpdateUser(context.Context, string, *string, *string, *string) (service.User, error) {
 	return service.User{}, nil
 }
@@ -36,5 +38,17 @@ func TestGRPCSignUp(t *testing.T) {
 	_, err = server.SignUp(context.Background(), &userpb.SignUpRequest{Email: "ada@example.com", Password: "short", Username: "Ada"})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid request code = %v, want %v", status.Code(err), codes.InvalidArgument)
+	}
+}
+
+func TestGRPCCheckUser(t *testing.T) {
+	server := NewGRPC(service.New(grpcRepository{}))
+	response, err := server.CheckUser(context.Background(), &userpb.CheckUserRequest{Id: "11111111-1111-1111-1111-111111111111"})
+	if err != nil || response == nil {
+		t.Fatalf("unexpected check-user response: %#v, %v", response, err)
+	}
+	_, err = NewGRPC(service.New(grpcRepository{existsErr: sql.ErrNoRows})).CheckUser(context.Background(), &userpb.CheckUserRequest{Id: "11111111-1111-1111-1111-111111111111"})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("missing user code = %v, want %v", status.Code(err), codes.NotFound)
 	}
 }

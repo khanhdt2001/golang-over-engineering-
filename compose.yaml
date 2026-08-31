@@ -52,14 +52,17 @@ services:
 
   task-api:
     build:
-      context: ./task
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: task/Dockerfile
     ports:
       - "8081:8081"
+      - "9091:9091"
     environment:
       DATABASE_URL: postgres://app:app@task-postgres:5432/tasks?sslmode=disable
+      USER_GRPC_ADDR: user-api:9090
     depends_on:
       - task-postgres
+      - user-api
     restart: on-failure
 
   loki:

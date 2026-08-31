@@ -61,6 +61,11 @@ func (p *Postgres) FindByEmail(ctx context.Context, email string) (service.User,
 	return user, passwordHash, err
 }
 
+func (p *Postgres) UserExists(ctx context.Context, id string) error {
+	var found string
+	return p.db.QueryRowContext(ctx, `SELECT id FROM users WHERE id = $1`, id).Scan(&found)
+}
+
 func (p *Postgres) UpdateUser(ctx context.Context, id string, email, username, passwordHash *string) (service.User, error) {
 	var user service.User
 	err := p.db.QueryRowContext(ctx, `UPDATE users SET email = COALESCE($1, email), username = COALESCE($2, username), password_hash = COALESCE($3, password_hash), updated_at = now() WHERE id = $4 RETURNING id, email, username`, email, username, passwordHash, id).Scan(&user.ID, &user.Email, &user.Username)

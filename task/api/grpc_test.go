@@ -28,7 +28,7 @@ func (grpcRepository) Update(context.Context, string, service.UpdateInput) (serv
 }
 
 func TestGRPCCreateTask(t *testing.T) {
-	server := NewGRPC(service.New(grpcRepository{}))
+	server := NewGRPC(service.New(grpcRepository{}, func(context.Context, string) error { return nil }))
 	response, err := server.CreateTask(context.Background(), &taskpb.CreateTaskRequest{Name: "Ship", UserId: "11111111-1111-1111-1111-111111111111"})
 	if err != nil || response.GetTask().GetId() != "22222222-2222-2222-2222-222222222222" {
 		t.Fatalf("unexpected create response: %#v, %v", response, err)

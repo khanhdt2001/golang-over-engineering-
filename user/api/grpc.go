@@ -39,6 +39,14 @@ func (h grpcHandler) SignIn(ctx context.Context, request *userpb.SignInRequest) 
 	return &userpb.SignInResponse{Token: token, User: protobufUser(user)}, nil
 }
 
+func (h grpcHandler) CheckUser(ctx context.Context, request *userpb.CheckUserRequest) (*userpb.CheckUserResponse, error) {
+	err := h.service.UserExists(ctx, request.GetId())
+	if err != nil {
+		return nil, grpcError(err)
+	}
+	return &userpb.CheckUserResponse{}, nil
+}
+
 func (h grpcHandler) UpdateProfile(ctx context.Context, request *userpb.UpdateProfileRequest) (*userpb.UpdateProfileResponse, error) {
 	user, err := h.service.UpdateProfile(ctx, tokenFromMetadata(ctx), service.UpdateInput{
 		Email: request.Email, Password: request.Password, Username: request.Username,
@@ -65,6 +73,8 @@ func grpcError(err error) error {
 	switch {
 	case errors.Is(err, service.ErrInvalidInput):
 		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, service.ErrNotFound):
+		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, service.ErrEmailExists):
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, service.ErrInvalidCredentials), errors.Is(err, service.ErrUnauthorized):

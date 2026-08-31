@@ -10,6 +10,7 @@ import (
 var (
 	ErrInvalidInput = errors.New("invalid input")
 	ErrNotFound     = errors.New("task not found")
+	ErrUserNotFound = errors.New("user not found")
 )
 
 type Task struct {
@@ -38,13 +39,23 @@ type Repository interface {
 	Update(context.Context, string, UpdateInput) (Task, error)
 }
 
-type Service struct{ repository Repository }
+type UserExists func(context.Context, string) error
 
-func New(repository Repository) *Service { return &Service{repository: repository} }
+type Service struct {
+	repository Repository
+	userExists UserExists
+}
+
+func New(repository Repository, userExists UserExists) *Service {
+	return &Service{repository: repository, userExists: userExists}
+}
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Task, error) {
 	if !validTask(input.Name, input.Description, input.UserID) {
 		return Task{}, ErrInvalidInput
+	}
+	if err := s.userExists(ctx, input.UserID); err != nil {
+		return Task{}, err
 	}
 	task, err := s.repository.Create(ctx, Task{
 		Name: input.Name, Description: input.Description, UserID: input.UserID,
@@ -80,6 +91,11 @@ func (s *Service) GetByUserID(ctx context.Context, userID string) ([]Task, error
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Task, error) {
 	if !validID(id) || !validUpdate(input) {
 		return Task{}, ErrInvalidInput
+	}
+	if input.UserID != nil {
+		if err := s.userExists(ctx, *input.UserID); err != nil {
+			return Task{}, err
+		}
 	}
 	task, err := s.repository.Update(ctx, id, input)
 	if err != nil && !errors.Is(err, ErrNotFound) {

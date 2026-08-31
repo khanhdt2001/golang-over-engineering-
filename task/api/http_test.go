@@ -27,7 +27,7 @@ func (fakeRepository) Update(context.Context, string, service.UpdateInput) (serv
 }
 
 func TestCreateTask(t *testing.T) {
-	handler := New(service.New(fakeRepository{}))
+	handler := New(service.New(fakeRepository{}, func(context.Context, string) error { return nil }))
 	request := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{"name":"Ship","description":"","user_id":"11111111-1111-1111-1111-111111111111"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()

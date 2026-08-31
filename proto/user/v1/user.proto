@@ -7,6 +7,7 @@ option go_package = "github.com/khanhdt2001/golang-over-engineering-/proto/user/
 service UserService {
   rpc SignUp(SignUpRequest) returns (SignUpResponse);
   rpc SignIn(SignInRequest) returns (SignInResponse);
+  rpc CheckUser(CheckUserRequest) returns (CheckUserResponse);
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
 }
 
@@ -35,6 +36,12 @@ message SignInResponse {
   string token = 1;
   User user = 2;
 }
+
+message CheckUserRequest {
+  string id = 1;
+}
+
+message CheckUserResponse {}
 
 // Authentication is passed in gRPC metadata, as the HTTP API uses a bearer header.
 message UpdateProfileRequest {

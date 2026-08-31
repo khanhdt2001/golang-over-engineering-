@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -16,6 +17,7 @@ type fakeRepository struct {
 	createdEmail string
 	createdHash  string
 	createErr    error
+	existsErr    error
 }
 
 func (f *fakeRepository) CreateUser(_ context.Context, email, passwordHash, _ string) (User, error) {
@@ -28,6 +30,7 @@ func (f *fakeRepository) CreateUser(_ context.Context, email, passwordHash, _ st
 func (*fakeRepository) FindByEmail(context.Context, string) (User, string, error) {
 	return User{}, "", nil
 }
+func (f *fakeRepository) UserExists(context.Context, string) error { return f.existsErr }
 func (*fakeRepository) UpdateUser(context.Context, string, *string, *string, *string) (User, error) {
 	return User{}, nil
 }
@@ -57,5 +60,15 @@ func TestSignUpLogsRepositoryError(t *testing.T) {
 	var entry map[string]any
 	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry["msg"] != "create user failed" || entry["operation"] != "sign_up" || entry["error"] != databaseErr.Error() {
 		t.Fatalf("unexpected service log: %s", logs.String())
+	}
+}
+
+func TestUserExists(t *testing.T) {
+	err := New(&fakeRepository{}).UserExists(context.Background(), "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := New(&fakeRepository{existsErr: sql.ErrNoRows}).UserExists(context.Background(), "11111111-1111-1111-1111-111111111111"); err != ErrNotFound {
+		t.Fatalf("missing user error = %v, want %v", err, ErrNotFound)
 	}
 }

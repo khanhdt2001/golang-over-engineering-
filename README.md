@@ -18,6 +18,7 @@ Services exposed on the host:
 | --- | --- | --- |
 | User API | `http://localhost:8080` | User HTTP API |
 | Task API | `http://localhost:8081` | Task HTTP API |
+| Task gRPC API | `localhost:9091` | Task gRPC API |
 | User PostgreSQL | `localhost:15432` | `users` database (`app` / `app`) |
 | Task PostgreSQL | `localhost:25432` | `tasks` database (`app` / `app`) |
 | Grafana | `http://localhost:3000` | Log exploration |
@@ -63,9 +64,17 @@ import taskpb "github.com/khanhdt2001/golang-over-engineering-/proto/task/v1"
 ```
 
 The user API also serves the `overengineering.user.v1.UserService` gRPC service
-on `localhost:9090`. Its `SignUp`, `SignIn`, and
+on `localhost:9090`. Its `SignUp`, `SignIn`, `CheckUser`, and
 `UpdateProfile` messages are defined in `proto/user/v1/user.proto`; send the
 session token as `authorization: Bearer <token>` metadata for `UpdateProfile`.
+
+The task API serves `overengineering.task.v1.TaskService` on `localhost:9091`.
+Its `CreateTask`, `GetTask`, `ListUserTasks`, and `UpdateTask` messages are
+defined in `proto/task/v1/task.proto`.
+
+Before creating or reassigning a task, the task API calls
+`overengineering.user.v1.UserService.CheckUser` over gRPC. It uses
+`USER_GRPC_ADDR` (default `localhost:9090`; Compose uses `user-api:9090`).
 
 ## API contract
 
@@ -173,7 +182,7 @@ Useful filters:
 
 ## Task API contract
 
-Task fields are `id`, `name`, `description`, `time`, and `user_id`. The task module stores them in its own `tasks` database. PostgreSQL foreign keys cannot span the separate `users` and `tasks` databases, so `user_id` is a UUID reference validated by the owning user module or gateway.
+Task fields are `id`, `name`, `description`, `time`, and `user_id`. The task module stores them in its own `tasks` database. PostgreSQL foreign keys cannot span the separate `users` and `tasks` databases, so the task module validates `user_id` with the user module's `CheckUser` gRPC RPC before creating or reassigning a task.
 
 ### Create task
 
