@@ -2,13 +2,25 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"over-engineering/user/audit"
 )
+
+type testPublisher struct{ event audit.Event }
+
+func (p *testPublisher) Publish(_ context.Context, event audit.Event) error {
+	p.event = event
+	return nil
+}
+func (*testPublisher) Close() error { return nil }
 
 func TestLogRequests(t *testing.T) {
 	old := slog.Default()
@@ -49,4 +61,16 @@ func TestLogRequests(t *testing.T) {
 			t.Fatalf("unexpected request log: %s", logs.String())
 		}
 	})
+}
+
+func TestAuditRequestsRedactsSecrets(t *testing.T) {
+	publisher := &testPublisher{}
+	handler := auditRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"token":"secret-token","user":{"email":"ada@example.com"}}`))
+	}), publisher)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/users/sign-in", bytes.NewBufferString(`{"email":"ada@example.com","password":"secret-password"}`)))
+	event := string(publisher.event.Input) + string(publisher.event.Output)
+	if strings.Contains(event, "secret-password") || strings.Contains(event, "secret-token") || !strings.Contains(event, "[REDACTED]") {
+		t.Fatalf("secrets were not redacted: %s", event)
+	}
 }

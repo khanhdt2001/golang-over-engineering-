@@ -35,8 +35,11 @@ services:
       - "9090:9090"
     environment:
       DATABASE_URL: postgres://app:app@user-postgres:5432/users?sslmode=disable
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: user-api-calls
     depends_on:
       - user-postgres
+      - kafka
     restart: on-failure
 
   task-postgres:
@@ -60,9 +63,12 @@ services:
     environment:
       DATABASE_URL: postgres://app:app@task-postgres:5432/tasks?sslmode=disable
       USER_GRPC_ADDR: user-api:9090
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: task-api-calls
     depends_on:
       - task-postgres
       - user-api
+      - kafka
     restart: on-failure
 
   loki:

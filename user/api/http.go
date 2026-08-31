@@ -1,13 +1,18 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"over-engineering/user/audit"
 	"over-engineering/user/service"
 )
 
@@ -32,12 +37,20 @@ type userResponse struct {
 }
 
 func New(service *service.Service) http.Handler {
+	return newHandler(service, nil)
+}
+
+func NewWithPublisher(service *service.Service, publisher audit.Publisher) http.Handler {
+	return newHandler(service, publisher)
+}
+
+func newHandler(service *service.Service, publisher audit.Publisher) http.Handler {
 	h := handler{service: service}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/users/sign-up", h.signUp)
 	mux.HandleFunc("POST /v1/users/sign-in", h.signIn)
 	mux.HandleFunc("PATCH /v1/users/me", h.updateProfile)
-	return logRequests(mux)
+	return auditRequests(logRequests(mux), publisher)
 }
 
 func logRequests(next http.Handler) http.Handler {
@@ -62,11 +75,49 @@ func logRequests(next http.Handler) http.Handler {
 	})
 }
 
+func auditRequests(next http.Handler, publisher audit.Publisher) http.Handler {
+	if publisher == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		writer := &auditResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(writer, r)
+		input, _ := json.Marshal(map[string]any{
+			"method": r.Method, "path": r.URL.Path, "query": r.URL.RawQuery, "body": audit.RedactJSON(body),
+		})
+		event := audit.Event{Service: "user", Protocol: "http", Operation: r.Method + " " + r.URL.Path, Input: input, Output: audit.RedactJSON(writer.body.Bytes()), Status: strconv.Itoa(writer.status), Timestamp: time.Now().UTC()}
+		go func() {
+			if err := publisher.Publish(context.Background(), event); err != nil {
+				slog.ErrorContext(context.Background(), "publish user API audit event failed", "error", err)
+			}
+		}()
+
+	})
+}
+
 type responseWriter struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
 	err         error
+}
+
+type auditResponseWriter struct {
+	http.ResponseWriter
+	body   bytes.Buffer
+	status int
+}
+
+func (w *auditResponseWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *auditResponseWriter) Write(data []byte) (int, error) {
+	w.body.Write(data)
+	return w.ResponseWriter.Write(data)
 }
 
 func (w *responseWriter) WriteHeader(status int) {

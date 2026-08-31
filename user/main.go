@@ -2,19 +2,24 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	userpb "github.com/khanhdt2001/golang-over-engineering-/proto/user/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	"over-engineering/user/api"
+	"over-engineering/user/audit"
 	"over-engineering/user/db"
 	"over-engineering/user/service"
 )
@@ -36,7 +41,16 @@ func main() {
 	}
 
 	users := service.New(repository)
-	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(logGRPCRequests))
+	brokers := strings.Split(envOr("KAFKA_BROKERS", "localhost:19092"), ",")
+	topic := envOr("KAFKA_TOPIC", "user-api-calls")
+	kafkaContext, cancelKafka := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelKafka()
+	if err := audit.EnsureTopic(kafkaContext, brokers, topic); err != nil {
+		log.Fatal(err)
+	}
+	publisher := audit.NewKafkaPublisher(brokers, topic)
+	defer publisher.Close()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(logGRPCRequests(publisher)))
 	userpb.RegisterUserServiceServer(grpcServer, api.NewGRPC(users))
 	reflection.Register(grpcServer)
 	grpcListener, err := net.Listen("tcp", ":9090")
@@ -46,24 +60,57 @@ func main() {
 	go func() { log.Fatal(grpcServer.Serve(grpcListener)) }()
 
 	log.Println("user HTTP API listening on :8080; gRPC API listening on :9090")
-	log.Fatal(http.ListenAndServe(":8080", api.New(users)))
+	log.Fatal(http.ListenAndServe(":8080", api.NewWithPublisher(users, publisher)))
 }
 
-func logGRPCRequests(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	start := time.Now()
-	response, err := handler(ctx, request)
-	level := slog.LevelInfo
+func envOr(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func logGRPCRequests(publisher audit.Publisher) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		start := time.Now()
+		response, err := handler(ctx, request)
+		level := slog.LevelInfo
+		if err != nil {
+			level = slog.LevelError
+		}
+		attrs := []slog.Attr{
+			slog.String("method", info.FullMethod),
+			slog.String("status", status.Code(err).String()),
+			slog.String("duration", time.Since(start).String()),
+		}
+		if err != nil {
+			attrs = append(attrs, slog.String("error", err.Error()))
+		}
+		slog.LogAttrs(ctx, level, "gRPC request complete", attrs...)
+		go publishGRPCAudit(context.Background(), publisher, info.FullMethod, request, response, err)
+		return response, err
+	}
+}
+
+func publishGRPCAudit(ctx context.Context, publisher audit.Publisher, operation string, request, response any, err error) {
+	output := protobufJSON(response)
 	if err != nil {
-		level = slog.LevelError
+		output, _ = json.Marshal(map[string]string{"error": err.Error()})
 	}
-	attrs := []slog.Attr{
-		slog.String("method", info.FullMethod),
-		slog.String("status", status.Code(err).String()),
-		slog.String("duration", time.Since(start).String()),
+	event := audit.Event{Service: "user", Protocol: "grpc", Operation: operation, Input: audit.RedactJSON(protobufJSON(request)), Output: audit.RedactJSON(output), Status: status.Code(err).String(), Timestamp: time.Now().UTC()}
+	if publishErr := publisher.Publish(ctx, event); publishErr != nil {
+		slog.ErrorContext(ctx, "publish user API audit event failed", "error", publishErr)
 	}
+}
+
+func protobufJSON(value any) json.RawMessage {
+	message, ok := value.(proto.Message)
+	if !ok {
+		return json.RawMessage(`null`)
+	}
+	data, err := protojson.Marshal(message)
 	if err != nil {
-		attrs = append(attrs, slog.String("error", err.Error()))
+		return json.RawMessage(`null`)
 	}
-	slog.LogAttrs(ctx, level, "gRPC request complete", attrs...)
-	return response, err
+	return data
 }

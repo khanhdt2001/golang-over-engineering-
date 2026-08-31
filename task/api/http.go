@@ -1,12 +1,17 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
+	"over-engineering/task/audit"
 	"over-engineering/task/service"
 )
 
@@ -32,13 +37,21 @@ type taskResponse struct {
 }
 
 func New(service *service.Service) http.Handler {
+	return newHandler(service, nil)
+}
+
+func NewWithPublisher(service *service.Service, publisher audit.Publisher) http.Handler {
+	return newHandler(service, publisher)
+}
+
+func newHandler(service *service.Service, publisher audit.Publisher) http.Handler {
 	h := handler{service: service}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/tasks", h.create)
 	mux.HandleFunc("GET /v1/tasks/{id}", h.getByID)
 	mux.HandleFunc("GET /v1/users/{userID}/tasks", h.getByUserID)
 	mux.HandleFunc("PATCH /v1/tasks/{id}", h.update)
-	return logRequests(mux)
+	return auditRequests(logRequests(mux), publisher)
 }
 
 func (h handler) create(w http.ResponseWriter, r *http.Request) {
@@ -113,11 +126,60 @@ func logRequests(next http.Handler) http.Handler {
 	})
 }
 
+func auditRequests(next http.Handler, publisher audit.Publisher) http.Handler {
+	if publisher == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20+1))
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		writer := &auditResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(writer, r)
+		requestBody := any(string(body))
+		if json.Valid(body) {
+			requestBody = json.RawMessage(body)
+		}
+		input, _ := json.Marshal(map[string]any{
+			"method": r.Method, "path": r.URL.Path, "query": r.URL.RawQuery, "body": requestBody,
+		})
+		output := json.RawMessage(`null`)
+		if json.Valid(writer.body.Bytes()) {
+			output = writer.body.Bytes()
+		} else if writer.body.Len() > 0 {
+			output, _ = json.Marshal(map[string]string{"body": writer.body.String()})
+		}
+		event := audit.Event{Service: "task", Protocol: "http", Operation: r.Method + " " + r.URL.Path, Input: input, Output: output, Status: strconv.Itoa(writer.status), Timestamp: time.Now().UTC()}
+
+		go func() {
+			if err := publisher.Publish(context.Background(), event); err != nil {
+				slog.ErrorContext(context.Background(), "publish task API audit event failed", "error", err)
+			}
+		}()
+
+	})
+}
+
 type responseWriter struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
 	err         error
+}
+
+type auditResponseWriter struct {
+	http.ResponseWriter
+	body   bytes.Buffer
+	status int
+}
+
+func (w *auditResponseWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *auditResponseWriter) Write(data []byte) (int, error) {
+	w.body.Write(data)
+	return w.ResponseWriter.Write(data)
 }
 
 func (w *responseWriter) WriteHeader(status int) {
