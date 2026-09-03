@@ -187,6 +187,22 @@ Useful filters:
 {service="kafka-logger"}
 ```
 
+## Tracing
+
+The Compose stack also sends OpenTelemetry traces through Alloy to Tempo. Open Grafana at
+`http://localhost:3000`, select the **Tempo** data source in Explore, then search for
+`service.name = task-api`. Creating a task shows the HTTP request, the task API's
+`CheckUser` gRPC client call, and the user API's gRPC server call in one trace.
+The same trace now includes `db.query SELECT`/`INSERT`/`UPDATE` spans with the parameterized
+PostgreSQL statement, plus a `kafka.publish` span for the audit event.
+
+HTTP and gRPC request logs include `trace_id` and `span_id`, so a trace can also be opened
+by pasting a logged `trace_id` into the Tempo trace-ID search.
+
+Tempo's local `metrics_generator` is enabled for TraceQL rate, error, and duration queries,
+which power Grafana's **Traces Drilldown** panels. Generate a fresh request, then refresh the
+page to see its metrics.
+
 ## Task API contract
 
 Task fields are `id`, `name`, `description`, `time`, and `user_id`. The task module stores them in its own `tasks` database. PostgreSQL foreign keys cannot span the separate `users` and `tasks` databases, so the task module validates `user_id` with the user module's `CheckUser` gRPC RPC before creating or reassigning a task.

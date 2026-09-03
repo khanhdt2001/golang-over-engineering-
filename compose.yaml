@@ -37,6 +37,7 @@ services:
       DATABASE_URL: postgres://app:app@user-postgres:5432/users?sslmode=disable
       KAFKA_BROKERS: kafka:29092
       KAFKA_TOPIC: user-api-calls
+      OTEL_EXPORTER_OTLP_ENDPOINT: alloy:4317
     depends_on:
       - user-postgres
       - kafka
@@ -65,6 +66,7 @@ services:
       USER_GRPC_ADDR: user-api:9090
       KAFKA_BROKERS: kafka:29092
       KAFKA_TOPIC: task-api-calls
+      OTEL_EXPORTER_OTLP_ENDPOINT: alloy:4317
     depends_on:
       - task-postgres
       - user-api
@@ -101,12 +103,23 @@ services:
       - /etc/alloy/config.alloy
     ports:
       - "12345:12345"
+      - "4317:4317"
     volumes:
       - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - alloy_data:/var/lib/alloy/data
     depends_on:
       - loki
+      - tempo
+
+  tempo:
+    image: grafana/tempo:2.8.2
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    ports:
+      - "3200:3200"
+    volumes:
+      - ./observability/tempo/config.yaml:/etc/tempo/config.yaml:ro
+      - tempo_data:/var/tempo
 
   grafana:
     image: grafana/grafana:12.3
@@ -117,6 +130,7 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       - loki
+      - tempo
 
 volumes:
   user_postgres_data:
@@ -124,3 +138,4 @@ volumes:
   loki_data:
   alloy_data:
   grafana_data:
+  tempo_data:

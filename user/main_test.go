@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	userpb "github.com/khanhdt2001/golang-over-engineering-/proto/user/v1"
 	"google.golang.org/grpc"
@@ -15,10 +16,14 @@ import (
 	"over-engineering/user/audit"
 )
 
-type testPublisher struct{ event audit.Event }
+type testPublisher struct {
+	event audit.Event
+	done  chan struct{}
+}
 
 func (p *testPublisher) Publish(_ context.Context, event audit.Event) error {
 	p.event = event
+	close(p.done)
 	return nil
 }
 func (*testPublisher) Close() error { return nil }
@@ -29,12 +34,17 @@ func TestLogGRPCRequests(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
-	publisher := &testPublisher{}
+	publisher := &testPublisher{done: make(chan struct{})}
 	_, err := logGRPCRequests(publisher)(context.Background(), &userpb.SignUpRequest{Password: "secret-password"}, &grpc.UnaryServerInfo{FullMethod: "/user.v1.UserService/SignUp"}, func(context.Context, any) (any, error) {
 		return nil, errors.New("invalid input")
 	})
 	if err == nil {
 		t.Fatal("expected handler error")
+	}
+	select {
+	case <-publisher.done:
+	case <-time.After(time.Second):
+		t.Fatal("audit event was not published")
 	}
 
 	var entry map[string]any

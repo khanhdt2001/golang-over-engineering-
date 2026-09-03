@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
 
 	"over-engineering/user/audit"
 	"over-engineering/user/service"
@@ -50,7 +52,7 @@ func newHandler(service *service.Service, publisher audit.Publisher) http.Handle
 	mux.HandleFunc("POST /v1/users/sign-up", h.signUp)
 	mux.HandleFunc("POST /v1/users/sign-in", h.signIn)
 	mux.HandleFunc("PATCH /v1/users/me", h.updateProfile)
-	return auditRequests(logRequests(mux), publisher)
+	return otelhttp.NewHandler(auditRequests(logRequests(mux), publisher), "user-api.http")
 }
 
 func logRequests(next http.Handler) http.Handler {
@@ -71,6 +73,9 @@ func logRequests(next http.Handler) http.Handler {
 		if writer.err != nil {
 			attrs = append(attrs, slog.String("error", writer.err.Error()))
 		}
+		if span := trace.SpanContextFromContext(r.Context()); span.IsValid() {
+			attrs = append(attrs, slog.String("trace_id", span.TraceID().String()), slog.String("span_id", span.SpanID().String()))
+		}
 		slog.LogAttrs(r.Context(), level, "request complete", attrs...)
 	})
 }
@@ -88,9 +93,10 @@ func auditRequests(next http.Handler, publisher audit.Publisher) http.Handler {
 			"method": r.Method, "path": r.URL.Path, "query": r.URL.RawQuery, "body": audit.RedactJSON(body),
 		})
 		event := audit.Event{Service: "user", Protocol: "http", Operation: r.Method + " " + r.URL.Path, Input: input, Output: audit.RedactJSON(writer.body.Bytes()), Status: strconv.Itoa(writer.status), Timestamp: time.Now().UTC()}
+		publishContext := audit.DetachedContext(r.Context())
 		go func() {
-			if err := publisher.Publish(context.Background(), event); err != nil {
-				slog.ErrorContext(context.Background(), "publish user API audit event failed", "error", err)
+			if err := publisher.Publish(publishContext, event); err != nil {
+				slog.ErrorContext(publishContext, "publish user API audit event failed", "error", err)
 			}
 		}()
 

@@ -6,6 +6,10 @@ import (
 	"errors"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"over-engineering/task/service"
 )
@@ -40,28 +44,34 @@ func Open(dsn string) (*Postgres, error) {
 func (p *Postgres) Close() error   { return p.db.Close() }
 func (p *Postgres) Migrate() error { _, err := p.db.Exec(schema); return err }
 
-func (p *Postgres) Create(ctx context.Context, task service.Task) (service.Task, error) {
-	err := p.db.QueryRowContext(ctx, `INSERT INTO tasks (name, description, user_id) VALUES ($1, $2, $3) RETURNING id, name, description, user_id`, task.Name, task.Description, task.UserID).Scan(&task.ID, &task.Name, &task.Description, &task.UserID)
+func (p *Postgres) Create(ctx context.Context, task service.Task) (_ service.Task, err error) {
+	ctx, span := querySpan(ctx, "INSERT", `INSERT INTO tasks (name, description, user_id) VALUES ($1, $2, $3) RETURNING id, name, description, user_id`)
+	defer finishSpan(span, &err)
+	err = p.db.QueryRowContext(ctx, `INSERT INTO tasks (name, description, user_id) VALUES ($1, $2, $3) RETURNING id, name, description, user_id`, task.Name, task.Description, task.UserID).Scan(&task.ID, &task.Name, &task.Description, &task.UserID)
 	return task, err
 }
 
-func (p *Postgres) FindByID(ctx context.Context, id string) (service.Task, error) {
+func (p *Postgres) FindByID(ctx context.Context, id string) (_ service.Task, err error) {
+	ctx, span := querySpan(ctx, "SELECT", `SELECT id, name, description, user_id FROM tasks WHERE id = $1`)
+	defer finishSpan(span, &err)
 	var task service.Task
-	err := p.db.QueryRowContext(ctx, `SELECT id, name, description, user_id FROM tasks WHERE id = $1`, id).Scan(&task.ID, &task.Name, &task.Description, &task.UserID)
+	err = p.db.QueryRowContext(ctx, `SELECT id, name, description, user_id FROM tasks WHERE id = $1`, id).Scan(&task.ID, &task.Name, &task.Description, &task.UserID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.Task{}, service.ErrNotFound
 	}
 	return task, err
 }
 
-func (p *Postgres) FindByUserID(ctx context.Context, userID string) ([]service.Task, error) {
+func (p *Postgres) FindByUserID(ctx context.Context, userID string) (tasks []service.Task, err error) {
+	ctx, span := querySpan(ctx, "SELECT", `SELECT id, name, description, user_id FROM tasks WHERE user_id = $1 ORDER BY id`)
+	defer finishSpan(span, &err)
 	rows, err := p.db.QueryContext(ctx, `SELECT id, name, description, user_id FROM tasks WHERE user_id = $1 ORDER BY id`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	tasks := make([]service.Task, 0)
+	tasks = make([]service.Task, 0)
 	for rows.Next() {
 		var task service.Task
 		if err := rows.Scan(&task.ID, &task.Name, &task.Description, &task.UserID); err != nil {
@@ -72,13 +82,30 @@ func (p *Postgres) FindByUserID(ctx context.Context, userID string) ([]service.T
 	return tasks, rows.Err()
 }
 
-func (p *Postgres) Update(ctx context.Context, id string, input service.UpdateInput) (service.Task, error) {
+func (p *Postgres) Update(ctx context.Context, id string, input service.UpdateInput) (_ service.Task, err error) {
+	ctx, span := querySpan(ctx, "UPDATE", `UPDATE tasks SET name = COALESCE($1, name), description = COALESCE($2, description), user_id = COALESCE($3, user_id), updated_at = now() WHERE id = $4 RETURNING id, name, description, user_id`)
+	defer finishSpan(span, &err)
 	var task service.Task
-	err := p.db.QueryRowContext(ctx, `UPDATE tasks SET name = COALESCE($1, name), description = COALESCE($2, description), user_id = COALESCE($3, user_id), updated_at = now() WHERE id = $4 RETURNING id, name, description, user_id`, input.Name, input.Description, input.UserID, id).Scan(&task.ID, &task.Name, &task.Description, &task.UserID)
+	err = p.db.QueryRowContext(ctx, `UPDATE tasks SET name = COALESCE($1, name), description = COALESCE($2, description), user_id = COALESCE($3, user_id), updated_at = now() WHERE id = $4 RETURNING id, name, description, user_id`, input.Name, input.Description, input.UserID, id).Scan(&task.ID, &task.Name, &task.Description, &task.UserID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.Task{}, service.ErrNotFound
 	}
 	return task, err
+}
+
+func querySpan(ctx context.Context, operation, statement string) (context.Context, trace.Span) {
+	return otel.Tracer("over-engineering/task/db").Start(ctx, "db.query "+operation,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(semconv.DBSystemNamePostgreSQL, semconv.DBOperationName(operation), semconv.DBQueryText(statement)),
+	)
+}
+
+func finishSpan(span trace.Span, err *error) {
+	if *err != nil {
+		span.RecordError(*err)
+		span.SetStatus(codes.Error, (*err).Error())
+	}
+	span.End()
 }
 
 var _ service.Repository = (*Postgres)(nil)

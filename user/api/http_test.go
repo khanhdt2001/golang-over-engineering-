@@ -10,14 +10,23 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/trace"
 
 	"over-engineering/user/audit"
 )
 
-type testPublisher struct{ event audit.Event }
+type testPublisher struct {
+	event audit.Event
+	done  chan struct{}
+}
 
 func (p *testPublisher) Publish(_ context.Context, event audit.Event) error {
 	p.event = event
+	close(p.done)
 	return nil
 }
 func (*testPublisher) Close() error { return nil }
@@ -63,12 +72,38 @@ func TestLogRequests(t *testing.T) {
 	})
 }
 
+func TestLogRequestsIncludesTraceIDs(t *testing.T) {
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(trace.NewTracerProvider())
+	t.Cleanup(func() { otel.SetTracerProvider(old) })
+
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	handler := otelhttp.NewHandler(logRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})), "test")
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry["trace_id"] == "" || entry["span_id"] == "" {
+		t.Fatalf("expected trace fields in request log: %s", logs.String())
+	}
+}
+
 func TestAuditRequestsRedactsSecrets(t *testing.T) {
-	publisher := &testPublisher{}
+	publisher := &testPublisher{done: make(chan struct{})}
 	handler := auditRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"token":"secret-token","user":{"email":"ada@example.com"}}`))
 	}), publisher)
 	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/users/sign-in", bytes.NewBufferString(`{"email":"ada@example.com","password":"secret-password"}`)))
+	select {
+	case <-publisher.done:
+	case <-time.After(time.Second):
+		t.Fatal("audit event was not published")
+	}
 	event := string(publisher.event.Input) + string(publisher.event.Output)
 	if strings.Contains(event, "secret-password") || strings.Contains(event, "secret-token") || !strings.Contains(event, "[REDACTED]") {
 		t.Fatalf("secrets were not redacted: %s", event)

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	userpb "github.com/khanhdt2001/golang-over-engineering-/proto/user/v1"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
@@ -26,6 +28,11 @@ import (
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	if shutdown, err := setupTelemetry(context.Background(), "user-api"); err != nil {
+		slog.Error("configure tracing", "error", err)
+	} else {
+		defer shutdown(context.Background())
+	}
 
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -50,7 +57,7 @@ func main() {
 	}
 	publisher := audit.NewKafkaPublisher(brokers, topic)
 	defer publisher.Close()
-	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(logGRPCRequests(publisher)))
+	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()), grpc.UnaryInterceptor(logGRPCRequests(publisher)))
 	userpb.RegisterUserServiceServer(grpcServer, api.NewGRPC(users))
 	reflection.Register(grpcServer)
 	grpcListener, err := net.Listen("tcp", ":9090")
@@ -86,8 +93,11 @@ func logGRPCRequests(publisher audit.Publisher) grpc.UnaryServerInterceptor {
 		if err != nil {
 			attrs = append(attrs, slog.String("error", err.Error()))
 		}
+		if span := trace.SpanContextFromContext(ctx); span.IsValid() {
+			attrs = append(attrs, slog.String("trace_id", span.TraceID().String()), slog.String("span_id", span.SpanID().String()))
+		}
 		slog.LogAttrs(ctx, level, "gRPC request complete", attrs...)
-		go publishGRPCAudit(context.Background(), publisher, info.FullMethod, request, response, err)
+		go publishGRPCAudit(audit.DetachedContext(ctx), publisher, info.FullMethod, request, response, err)
 		return response, err
 	}
 }

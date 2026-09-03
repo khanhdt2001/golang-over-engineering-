@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +9,9 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/trace"
 
 	"over-engineering/task/audit"
 	"over-engineering/task/service"
@@ -51,7 +53,7 @@ func newHandler(service *service.Service, publisher audit.Publisher) http.Handle
 	mux.HandleFunc("GET /v1/tasks/{id}", h.getByID)
 	mux.HandleFunc("GET /v1/users/{userID}/tasks", h.getByUserID)
 	mux.HandleFunc("PATCH /v1/tasks/{id}", h.update)
-	return auditRequests(logRequests(mux), publisher)
+	return otelhttp.NewHandler(auditRequests(logRequests(mux), publisher), "task-api.http")
 }
 
 func (h handler) create(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +124,9 @@ func logRequests(next http.Handler) http.Handler {
 		if writer.err != nil {
 			attrs = append(attrs, slog.String("error", writer.err.Error()))
 		}
+		if span := trace.SpanContextFromContext(r.Context()); span.IsValid() {
+			attrs = append(attrs, slog.String("trace_id", span.TraceID().String()), slog.String("span_id", span.SpanID().String()))
+		}
 		slog.LogAttrs(r.Context(), level, "request complete", attrs...)
 	})
 }
@@ -150,9 +155,10 @@ func auditRequests(next http.Handler, publisher audit.Publisher) http.Handler {
 		}
 		event := audit.Event{Service: "task", Protocol: "http", Operation: r.Method + " " + r.URL.Path, Input: input, Output: output, Status: strconv.Itoa(writer.status), Timestamp: time.Now().UTC()}
 
+		publishContext := audit.DetachedContext(r.Context())
 		go func() {
-			if err := publisher.Publish(context.Background(), event); err != nil {
-				slog.ErrorContext(context.Background(), "publish task API audit event failed", "error", err)
+			if err := publisher.Publish(publishContext, event); err != nil {
+				slog.ErrorContext(publishContext, "publish task API audit event failed", "error", err)
 			}
 		}()
 

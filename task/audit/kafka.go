@@ -10,6 +10,10 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Event struct {
@@ -38,7 +42,12 @@ func NewKafkaPublisher(brokers []string, topic string) *KafkaPublisher {
 	}}
 }
 
-func (p *KafkaPublisher) Publish(ctx context.Context, event Event) error {
+func (p *KafkaPublisher) Publish(ctx context.Context, event Event) (err error) {
+	ctx, span := otel.Tracer("over-engineering/task/audit").Start(ctx, "kafka.publish",
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(semconv.MessagingSystemKafka, semconv.MessagingOperationName("publish"), semconv.MessagingDestinationName(p.writer.Topic)),
+	)
+	defer finishSpan(span, &err)
 	message, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -47,6 +56,19 @@ func (p *KafkaPublisher) Publish(ctx context.Context, event Event) error {
 }
 
 func (p *KafkaPublisher) Close() error { return p.writer.Close() }
+
+// DetachedContext keeps the request trace after its HTTP or gRPC context is canceled.
+func DetachedContext(ctx context.Context) context.Context {
+	return trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(ctx))
+}
+
+func finishSpan(span trace.Span, err *error) {
+	if *err != nil {
+		span.RecordError(*err)
+		span.SetStatus(codes.Error, (*err).Error())
+	}
+	span.End()
+}
 
 func EnsureTopic(ctx context.Context, brokers []string, topic string) error {
 	if len(brokers) == 0 || brokers[0] == "" || topic == "" {
