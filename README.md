@@ -22,8 +22,9 @@ Services exposed on the host:
 | Kafka logger | `docker compose logs -f kafka-logger` | Replays and logs Kafka audit messages |
 | User PostgreSQL | `localhost:15432` | `users` database (`app` / `app`) |
 | Task PostgreSQL | `localhost:25432` | `tasks` database (`app` / `app`) |
-| Grafana | `http://localhost:3000` | Log exploration |
+| Grafana | `http://localhost:3000` | Log and trace exploration |
 | Loki | `http://localhost:3100` | Log store |
+| Tempo | `http://localhost:3200` | Trace store (use Grafana to explore traces) |
 | Alloy | `http://localhost:12345` | Docker-log collector status |
 
 Run either API outside Docker (its Compose PostgreSQL must be running):
