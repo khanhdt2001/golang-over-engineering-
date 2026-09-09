@@ -17,14 +17,53 @@ services:
 
   user-postgres:
     image: postgres:17-alpine
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - hba_file=/tmp/pg_hba.conf
     ports:
       - "15432:5432"
     environment:
       POSTGRES_DB: users
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
     volumes:
       - user_postgres_data:/var/lib/postgresql/data
+      - ./user/db/init_replication.sql:/docker-entrypoint-initdb.d/01-replication.sql:ro
+      - ./user/db/pg_hba.conf:/tmp/pg_hba.conf:ro
+
+  user-postgres-replica:
+    image: postgres:17-alpine
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      PGPASSWORD: strong-password
+    command: 
+      - sh
+      - -ec
+      - |
+        chown postgres:postgres "$$PGDATA"
+        chmod 700 "$$PGDATA"
+        exec su postgres -s /bin/sh -c '
+          if [ ! -f "$$PGDATA/PG_VERSION" ]; then
+            until pg_basebackup -h user-postgres -U replicator -D "$$PGDATA" -Fp -Xs -P -R; do
+              sleep 2
+            done
+          fi
+          exec postgres
+        '
+    ports:
+      - "15433:5432"
+    depends_on:
+      - user-postgres
+    volumes:
+      - user_postgres_replica_data:/var/lib/postgresql/data
 
   user-api:
     build:
@@ -139,3 +178,4 @@ volumes:
   alloy_data:
   grafana_data:
   tempo_data:
+  user_postgres_replica_data:
